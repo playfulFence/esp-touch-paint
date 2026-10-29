@@ -6,6 +6,8 @@ controller, written in bare-metal Rust with [esp-hal](https://github.com/esp-rs/
 Boards that run it share the canvas over ESP-NOW: draw on one board, and the strokes appear on all
 of them.
 
+![Two boards share one canvas: writing on one board appears on the other](docs/demo.gif)
+
 ## Boards
 
 | Board | Feature | Restore button |
