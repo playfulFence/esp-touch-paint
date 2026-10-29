@@ -13,7 +13,7 @@ of them.
 | Board | Feature | Restore button |
 | --- | --- | --- |
 | [ESP32-S3-LCD-EV-Board](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-lcd-ev-board/) with the 4.3" SUB3 subboard (800x480, ST7262 + GT1151) | `esp32s3` | BOOT |
-| ESP32-S31-Korvo-1 with its LCD subboard | `esp32s31` | SET |
+| [ESP32-S31-Korvo-1](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s31/esp32-s31-korvo-1/index.html) with its LCD subboard | `esp32s31` | SET |
 
 The ESP32-S3-LCD-EV-Board pins are for board versions before v1.5, which have the
 ESP32-S3-WROOM-1-N16R8 module.
