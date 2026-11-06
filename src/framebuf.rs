@@ -1,11 +1,14 @@
 //! Drawing into the RGB565 framebuffer.
+//!
+//! All coordinates are canvas coordinates. The framebuffer holds the part of the canvas that the
+//! panel shows, and drawing outside of it is clipped.
 
 use core::ops::Range;
 
 use embedded_graphics::{pixelcolor::Rgb565, prelude::*, primitives::Rectangle};
 
 use crate::{
-    display::{HEIGHT, WIDTH},
+    display::{self, HEIGHT, ORIGIN, WIDTH},
     ui::TOOLBAR_HEIGHT,
 };
 
@@ -21,9 +24,17 @@ impl<'a> FrameBuf<'a> {
         Self { bytes, dirty: 0..0 }
     }
 
-    /// Rows written since this `FrameBuf` was created.
+    /// Framebuffer rows written since this `FrameBuf` was created.
     pub fn dirty_rows(&self) -> Range<usize> {
         self.dirty.clone()
+    }
+
+    /// Whether anything was written between canvas rows `top` and `bottom`, exclusive.
+    #[cfg(feature = "vocat")]
+    pub fn is_dirty(&self, top: i32, bottom: i32) -> bool {
+        let top = (top - ORIGIN.y).max(0) as usize;
+        let bottom = (bottom - ORIGIN.y).max(0) as usize;
+        self.dirty.start < bottom && top < self.dirty.end
     }
 
     fn mark_dirty(&mut self, rows: Range<usize>) {
@@ -38,15 +49,17 @@ impl<'a> FrameBuf<'a> {
     }
 
     fn set_pixel(&mut self, x: i32, y: i32, color: Rgb565) {
+        let (x, y) = (x - ORIGIN.x, y - ORIGIN.y);
         if x < 0 || x >= WIDTH as i32 || y < 0 || y >= HEIGHT as i32 {
             return;
         }
         let offset = (y as usize * WIDTH + x as usize) * 2;
-        self.bytes[offset..offset + 2].copy_from_slice(&color.into_storage().to_le_bytes());
+        self.bytes[offset..offset + 2].copy_from_slice(&display::pixel(color));
         self.mark_dirty(y as usize..y as usize + 1);
     }
 
     pub fn fill_rect(&mut self, x: i32, y: i32, width: i32, height: i32, color: Rgb565) {
+        let (x, y) = (x - ORIGIN.x, y - ORIGIN.y);
         let x0 = x.clamp(0, WIDTH as i32) as usize;
         let y0 = y.clamp(0, HEIGHT as i32) as usize;
         let x1 = (x + width).clamp(0, WIDTH as i32) as usize;
@@ -54,15 +67,15 @@ impl<'a> FrameBuf<'a> {
         if x0 < x1 {
             self.mark_dirty(y0..y1);
         }
-        let raw = color.into_storage();
-        let word = raw as u32 | ((raw as u32) << 16);
+        let pixel = display::pixel(color);
+        let word = u32::from_ne_bytes([pixel[0], pixel[1], pixel[0], pixel[1]]);
 
         for row in y0..y1 {
             let row = &mut self.bytes[(row * WIDTH + x0) * 2..(row * WIDTH + x1) * 2];
             let (prefix, middle, suffix) = unsafe { row.align_to_mut::<u32>() };
-            prefix.as_chunks_mut::<2>().0.fill(raw.to_le_bytes());
+            prefix.as_chunks_mut::<2>().0.fill(pixel);
             middle.fill(word);
-            suffix.as_chunks_mut::<2>().0.fill(raw.to_le_bytes());
+            suffix.as_chunks_mut::<2>().0.fill(pixel);
         }
     }
 
@@ -116,9 +129,9 @@ impl<'a> FrameBuf<'a> {
     }
 }
 
-impl OriginDimensions for FrameBuf<'_> {
-    fn size(&self) -> Size {
-        Size::new(WIDTH as u32, HEIGHT as u32)
+impl Dimensions for FrameBuf<'_> {
+    fn bounding_box(&self) -> Rectangle {
+        Rectangle::new(ORIGIN, Size::new(WIDTH as u32, HEIGHT as u32))
     }
 }
 

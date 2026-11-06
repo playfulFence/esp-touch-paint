@@ -32,6 +32,16 @@ esp32s3 = [
     "esp-radio/esp32s3",
     "esp-rtos/esp32s3",
 ]
+# ESP-VoCat v1.2 (ESP32-S3, 1.85" 360x360 round LCD, ST77916 + CST816T).
+vocat = [
+    "esp-alloc/esp32s3",
+    "esp-backtrace/esp32s3",
+    "esp-bootloader-esp-idf/esp32s3",
+    "esp-hal/esp32s3",
+    "esp-println/esp32s3",
+    "esp-radio/esp32s3",
+    "esp-rtos/esp32s3",
+]
 # ESP32-S31-Korvo-1 with its LCD subboard.
 esp32s31 = [
     "esp-alloc/esp32s31",

@@ -1,4 +1,4 @@
-//! Touch-controlled paint program for an 800x480 RGB LCD with a Goodix touch controller.
+//! Touch-controlled paint program for Espressif boards with a touch LCD.
 //!
 //! Draw with a finger, choose a color and brush size from the toolbar, use the
 //! eraser, or clear the canvas. A board button restores the demo picture.
@@ -29,14 +29,16 @@ use crate::{
     button::RestoreButton,
     display::Display,
     framebuf::FrameBuf,
-    shared_canvas::{Op, Outbox, PACKET_BYTES, Peers},
+    shared_canvas::{CANVAS_HEIGHT, CANVAS_WIDTH, Op, Outbox, PACKET_BYTES, Peers},
     touch::{Touch, TouchEvent},
-    ui::{CANVAS_COLOR, PALETTE, TOOLBAR_HEIGHT, ToolbarButton},
+    ui::{CANVAS_COLOR, PALETTE, ToolbarButton},
 };
 
 mod button;
 mod display;
 mod framebuf;
+#[cfg(feature = "vocat")]
+mod pads;
 mod shared_canvas;
 mod touch;
 mod ui;
@@ -86,6 +88,45 @@ cfg_select! {
                 button: ButtonResources<'d> {
                     // BOOT
                     pin: GPIO0,
+                },
+            }
+        }
+    }
+    feature = "vocat" => {
+        // ESP-VoCat v1.2: 1.85" 360x360 round LCD (ST77916 on QSPI) with a CST816T touch
+        // controller, and two capacitive touch pads on the cat's head.
+        assign_resources! {
+            pub Resources<'d> {
+                lcd: LcdResources<'d> {
+                    spi: SPI2,
+                    dma: DMA_CH0,
+                    clk: GPIO18,
+                    d0: GPIO46,
+                    d1: GPIO13,
+                    d2: GPIO11,
+                    d3: GPIO12,
+                    cs: GPIO14,
+                    dc: GPIO45,
+                    // High holds the LCD and the touch controller in reset.
+                    reset: GPIO47,
+                    // Low switches on VCC_3V3, which powers the LCD and the touch controller.
+                    power: GPIO9,
+                    backlight: GPIO44,
+                },
+                touch: TouchResources<'d> {
+                    i2c: I2C0,
+                    sda: GPIO2,
+                    scl: GPIO1,
+                },
+                button: ButtonResources<'d> {
+                    // BOOT
+                    pin: GPIO0,
+                },
+                pads: PadResources<'d> {
+                    sens: SENS,
+                    rtc_io: RTC_IO,
+                    back: GPIO6,
+                    front: GPIO7,
                 },
             }
         }
@@ -159,13 +200,7 @@ async fn main(_spawner: Spawner) -> ! {
     };
     let dirty = {
         let mut frame = FrameBuf::new(&mut display);
-        frame.fill_rect(
-            0,
-            0,
-            display::WIDTH as i32,
-            display::HEIGHT as i32,
-            CANVAS_COLOR,
-        );
+        frame.fill_rect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_COLOR);
         ui::draw_toolbar(&mut frame, selected, radius, eraser);
         frame.dirty_rows()
     };
@@ -185,6 +220,8 @@ async fn main(_spawner: Spawner) -> ! {
         shared_canvas::CHANNEL
     );
 
+    #[cfg(feature = "vocat")]
+    let mut pads = pads::Pads::new(resources.pads).await;
     let mut button = RestoreButton::new(resources.button);
     let mut was_down = false;
     let mut last_point: Option<(i32, i32)> = None;
@@ -201,6 +238,7 @@ async fn main(_spawner: Spawner) -> ! {
                     apply(&mut frame, op)
                 });
             }
+            ui::repair_toolbar(&mut frame, selected, radius, eraser);
             frame.dirty_rows()
         };
         display.writeback(dirty);
@@ -225,6 +263,28 @@ async fn main(_spawner: Spawner) -> ! {
             button_latched = false;
         }
 
+        // The front pad clears the canvas, the back pad steps through the brush sizes.
+        #[cfg(feature = "vocat")]
+        if let Some(pad) = pads.poll() {
+            let button = match pad {
+                pads::Pad::Front => ToolbarButton::Clear,
+                pads::Pad::Back => ToolbarButton::BrushSize(ui::next_brush_radius(radius)),
+            };
+            let dirty = {
+                let mut frame = FrameBuf::new(&mut display);
+                press(
+                    &mut frame,
+                    &mut outbox,
+                    button,
+                    &mut selected,
+                    &mut radius,
+                    &mut eraser,
+                );
+                frame.dirty_rows()
+            };
+            display.writeback(dirty);
+        }
+
         match touch.read().await {
             None => {}
             Some(TouchEvent::Up) => {
@@ -234,22 +294,16 @@ async fn main(_spawner: Spawner) -> ! {
             Some(TouchEvent::Down(x, y)) => {
                 let dirty = {
                     let mut frame = FrameBuf::new(&mut display);
-                    if y < TOOLBAR_HEIGHT {
-                        if !was_down {
-                            match ui::toolbar_button(x) {
-                                Some(ToolbarButton::Color(index)) => {
-                                    selected = index;
-                                    eraser = false;
-                                }
-                                Some(ToolbarButton::BrushSize(size)) => radius = size,
-                                Some(ToolbarButton::Eraser) => eraser = true,
-                                Some(ToolbarButton::Clear) => {
-                                    apply(&mut frame, Op::Clear);
-                                    outbox.push(Op::Clear);
-                                }
-                                None => {}
-                            }
-                            ui::draw_toolbar(&mut frame, selected, radius, eraser);
+                    if ui::on_toolbar(x, y) {
+                        if !was_down && let Some(button) = ui::toolbar_button(x, y) {
+                            press(
+                                &mut frame,
+                                &mut outbox,
+                                button,
+                                &mut selected,
+                                &mut radius,
+                                &mut eraser,
+                            );
                         }
                         last_point = None;
                     } else {
@@ -265,6 +319,7 @@ async fn main(_spawner: Spawner) -> ! {
                             },
                         };
                         apply(&mut frame, op);
+                        ui::repair_toolbar(&mut frame, selected, radius, eraser);
                         outbox.push(op);
                         last_point = Some(point);
                     }
@@ -279,6 +334,30 @@ async fn main(_spawner: Spawner) -> ! {
             let _ = esp_now.send_async(&BROADCAST_ADDRESS, packet).await;
         }
     }
+}
+
+/// Acts on a toolbar button and redraws the toolbar.
+fn press(
+    frame: &mut FrameBuf<'_>,
+    outbox: &mut Outbox,
+    button: ToolbarButton,
+    selected: &mut usize,
+    radius: &mut i32,
+    eraser: &mut bool,
+) {
+    match button {
+        ToolbarButton::Color(index) => {
+            *selected = index;
+            *eraser = false;
+        }
+        ToolbarButton::BrushSize(size) => *radius = size,
+        ToolbarButton::Eraser => *eraser = true,
+        ToolbarButton::Clear => {
+            apply(frame, Op::Clear);
+            outbox.push(Op::Clear);
+        }
+    }
+    ui::draw_toolbar(frame, *selected, *radius, *eraser);
 }
 
 fn apply(frame: &mut FrameBuf<'_>, op: Op) {

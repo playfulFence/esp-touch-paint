@@ -3,7 +3,7 @@
 use crate::ButtonResources;
 
 cfg_select! {
-    feature = "esp32s3" => {
+    any(feature = "esp32s3", feature = "vocat") => {
         use esp_hal::gpio::{Input, InputConfig, Pull};
 
         /// The BOOT button.

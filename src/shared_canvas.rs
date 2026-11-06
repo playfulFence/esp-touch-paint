@@ -4,15 +4,18 @@
 //! Each board broadcasts its drawing operations with sequence numbers. ESP-NOW broadcasts have no
 //! acknowledgements, so every packet repeats the last few operations, and a receiver applies only
 //! the ones that it has not applied yet. A board that starts later sees only new drawing.
+//!
+//! Operations use canvas coordinates. The canvas is as large as the largest panel, and smaller
+//! panels show a part of it.
 
 use embedded_graphics::{
     pixelcolor::{Rgb565, raw::RawU16},
     prelude::*,
 };
 
-use crate::display::{HEIGHT, WIDTH};
-
 pub const CHANNEL: u8 = 1;
+pub const CANVAS_WIDTH: i32 = 800;
+pub const CANVAS_HEIGHT: i32 = 480;
 
 const MAGIC: [u8; 4] = *b"TPv1";
 /// Operations per packet. Each operation goes out in up to this many packets.
@@ -62,13 +65,13 @@ impl Op {
     }
 
     fn decode(bytes: &[u8; OP_BYTES]) -> Option<Self> {
-        let coordinate = |i: usize, max: usize| {
-            (u16::from_le_bytes([bytes[1 + i * 2], bytes[2 + i * 2]]) as i32).min(max as i32 - 1)
+        let coordinate = |i: usize, max: i32| {
+            (u16::from_le_bytes([bytes[1 + i * 2], bytes[2 + i * 2]]) as i32).min(max - 1)
         };
         match bytes[0] {
             0 => Some(Op::Line {
-                from: (coordinate(0, WIDTH), coordinate(1, HEIGHT)),
-                to: (coordinate(2, WIDTH), coordinate(3, HEIGHT)),
+                from: (coordinate(0, CANVAS_WIDTH), coordinate(1, CANVAS_HEIGHT)),
+                to: (coordinate(2, CANVAS_WIDTH), coordinate(3, CANVAS_HEIGHT)),
                 radius: (bytes[9] as i32).min(MAX_RADIUS),
                 color: Rgb565::from(RawU16::new(u16::from_le_bytes([bytes[10], bytes[11]]))),
             }),

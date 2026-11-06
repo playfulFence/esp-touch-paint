@@ -18,9 +18,12 @@ ESP_LOG = "info"
 [unstable]
 build-std = ["alloc", "core"]
 
-# One alias per board. The ESP32-S3 aliases need Espressif's Xtensa toolchain: `cargo +esp run-s3`.
+# One alias per board. The ESP32-S3 aliases (s3, vocat) need Espressif's Xtensa toolchain:
+# `cargo +esp run-s3`.
 [alias]
 build-korvo = ["build", "--release", "--target", "riscv32imafc-unknown-none-elf", "--features", "esp32s31"]
 run-korvo   = ["run", "--release", "--target", "riscv32imafc-unknown-none-elf", "--features", "esp32s31"]
 build-s3    = ["build", "--release", "--target", "xtensa-esp32s3-none-elf", "--features", "esp32s3"]
 run-s3      = ["run", "--release", "--target", "xtensa-esp32s3-none-elf", "--features", "esp32s3"]
+build-vocat = ["build", "--release", "--target", "xtensa-esp32s3-none-elf", "--features", "vocat"]
+run-vocat   = ["run", "--release", "--target", "xtensa-esp32s3-none-elf", "--features", "vocat"]
